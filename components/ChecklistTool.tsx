@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { CHECKLIST_ITEMS, CALCULATE_CHECKLIST_LEVEL, CNAE_LIST, GET_RISK_DEGREE, GET_CNAE_DETAILS, BUSINESS_TYPES, GET_BUSINESS_TYPE_BY_CNAE } from '../constants';
 import { ChecklistState, CompanyProfile, InternalProfile, Branch, Contract, ChecklistItem } from '../types';
-import { CheckCircle2, ShieldAlert, Check, Building2, ArrowRight, FileText, Download, PieChart as PieChartIcon, Printer, Briefcase, Factory, Search, AlertTriangle, AlertCircle, XCircle, LayoutGrid, Zap, ChevronDown, Wand2, BookOpen, Target, Calendar, User, Plus, Trash2, MapPin, Upload, FileSpreadsheet, Loader2, Save, FolderOpen, RefreshCw, MessageSquare, ClipboardCheck } from 'lucide-react';
+import { CheckCircle2, ShieldAlert, Check, Building2, ArrowRight, FileText, Download, PieChart as PieChartIcon, Printer, Briefcase, Factory, Search, AlertTriangle, AlertCircle, XCircle, LayoutGrid, Zap, ChevronDown, Wand2, BookOpen, Target, Calendar, User, Plus, Trash2, MapPin, Upload, FileSpreadsheet, Loader2, Save, FolderOpen, RefreshCw, MessageSquare, ClipboardCheck, Sparkles } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface Props {

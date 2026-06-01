@@ -413,6 +413,72 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
     setSuccessMessage(null);
   };
 
+  const handleDemoLogin = () => {
+    setLoading(true);
+    setErrorMessage(null);
+    setSuccessMessage('Acessando em modo demonstração local...');
+    
+    setTimeout(() => {
+      const demoUser = {
+        id: 'usr_demo_sst',
+        email: 'demo@nr1safety.com.br',
+        name: 'Carlos Oliveira (Consultor SST)',
+        isLocal: true
+      };
+
+      const demoCompany: CompanyProfile = {
+        name: 'Supermercados Estrela Ltda',
+        cnpj: '47.113.020/0001-99',
+        employees: '35',
+        sector: 'COMERCIO_SERVICOS',
+        cnae: '47.11-3/02',
+        cnaeDescription: 'Comércio varejista de mercadorias em geral, com predominância de produtos alimentícios - hipermercados e supermercados',
+        riskDegree: '2',
+        porte_ibge: 'Pequena',
+        perfil_interno: InternalProfile.PEQUENA_STANDARD,
+        branches: [
+          {
+            id: 'br_admin_demo',
+            name: 'Administrativo & Recursos Humanos',
+            cnpj: '47.113.020/0001-99',
+            employees: 5,
+            contracts: []
+          },
+          {
+            id: 'br_checkout_demo',
+            name: 'Venda Geral & Frente de Caixa',
+            cnpj: '47.113.020/0001-99',
+            employees: 20,
+            contracts: []
+          },
+          {
+            id: 'br_logistics_demo',
+            name: 'Recebimento & Estoque',
+            cnpj: '47.113.020/0001-99',
+            employees: 10,
+            contracts: []
+          }
+        ]
+      };
+
+      // Store in local users as fallback to allow session resumes
+      try {
+        const localUsersSaved = localStorage.getItem('nr1_local_users');
+        const localUsers = localUsersSaved ? JSON.parse(localUsersSaved) : [];
+        const existing = localUsers.find((u: any) => u.id === demoUser.id);
+        if (!existing) {
+          localUsers.push(demoUser);
+          localStorage.setItem('nr1_local_users', JSON.stringify(localUsers));
+        }
+      } catch (e) {
+        console.warn('LocalStorage error:', e);
+      }
+
+      onSuccess(demoUser, demoCompany);
+      setLoading(false);
+    }, 550);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 selection:bg-emerald-500 selection:text-white">
       {/* Background glow effects */}
@@ -746,14 +812,33 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
             {/* ACTION BUTTONS */}
             <div className="pt-3">
               {isLogin ? (
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-extrabold text-sm py-3.5 px-4 rounded-xl hover:shadow-lg hover:shadow-emerald-500/10 transition-all flex items-center justify-center gap-2 group cursor-pointer disabled:opacity-50"
-                >
-                  {loading ? 'Autenticando...' : 'Acessar Central SST'}
-                  <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
-                </button>
+                <div className="space-y-4">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-extrabold text-sm py-3.5 px-4 rounded-xl hover:shadow-lg hover:shadow-emerald-500/10 transition-all flex items-center justify-center gap-2 group cursor-pointer disabled:opacity-50"
+                  >
+                    {loading ? 'Autenticando...' : 'Acessar Central SST'}
+                    <ArrowRight size={16} className="transition-transform group-hover:translate-x-1" />
+                  </button>
+
+                  <div className="flex items-center gap-2 py-1">
+                    <div className="h-[1px] bg-slate-850 flex-1" />
+                    <span className="text-[10px] text-slate-500 uppercase tracking-widest font-black">Ambiente de Testes</span>
+                    <div className="h-[1px] bg-slate-850 flex-1" />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleDemoLogin}
+                    disabled={loading}
+                    className="w-full bg-slate-950/80 hover:bg-slate-900 text-emerald-400 border border-emerald-950 hover:border-emerald-500/30 font-bold text-xs py-3 rounded-xl transition-all flex items-center justify-center gap-2 active:scale-95 duration-200"
+                    title="Acesse instantaneamente com um perfil de demonstração completo"
+                  >
+                    <Sparkles size={14} className="animate-pulse" />
+                    <span>Acessar com Conta de Demonstração (Sem Senha)</span>
+                  </button>
+                </div>
               ) : (
                 <div className="flex gap-2">
                   {step > 1 && (
