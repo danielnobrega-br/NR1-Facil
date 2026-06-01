@@ -44,6 +44,70 @@ export const ChecklistTool: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importProgressRef = useRef<HTMLInputElement>(null);
 
+  const [isFetchingCnpj, setIsFetchingCnpj] = useState(false);
+
+  const fetchCnpjDataInChecklist = async () => {
+    const cleanCnpj = company.cnpj.replace(/\D/g, '');
+    if (cleanCnpj.length < 14) {
+      alert('CNPJ deve conter 14 dígitos para consulta.');
+      return;
+    }
+    setIsFetchingCnpj(true);
+    try {
+      const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`);
+      if (!res.ok) {
+        throw new Error('Empresa não encontrada na base pública da Receita Federal.');
+      }
+      const data = await res.json();
+      
+      const cleanName = data.nome_fantasia || data.razao_social || '';
+      if (cleanName) {
+        onCompanyChange('name', cleanName);
+      }
+      
+      const cnaeFiscalStr = String(data.cnae_fiscal || '');
+      const cleanCnae = cnaeFiscalStr.replace(/\D/g, '');
+      
+      let displayCnae = '';
+      if (cleanCnae.length === 7) {
+        displayCnae = `${cleanCnae.substring(0, 4)}-${cleanCnae.substring(4, 5)}/${cleanCnae.substring(5, 7)}`;
+      } else {
+        displayCnae = cleanCnae;
+      }
+      
+      let risk = '1';
+      let matchedCnaeInDb = CNAE_LIST.find(item => {
+        const itemClean = item.code.replace(/\D/g, '');
+        return cleanCnae.startsWith(itemClean) || itemClean.startsWith(cleanCnae);
+      });
+      
+      if (matchedCnaeInDb) {
+        risk = matchedCnaeInDb.risk;
+      }
+      
+      const cnaeDesc = data.cnae_fiscal_descricao || matchedCnaeInDb?.desc || 'Atividade Comercial';
+      const division = parseInt(cleanCnae.substring(0, 2)) || 0;
+      const sector = (division >= 5 && division <= 43) ? 'INDUSTRIA' : 'COMERCIO_SERVICOS';
+      
+      onCompanyChange('cnae', displayCnae || cleanCnae);
+      onCompanyChange('cnaeDescription', cnaeDesc);
+      onCompanyChange('riskDegree', risk);
+      onCompanyChange('sector', sector);
+      
+      const foundType = GET_BUSINESS_TYPE_BY_CNAE(displayCnae || cleanCnae) || GET_BUSINESS_TYPE_BY_CNAE(matchedCnaeInDb?.code || '');
+      if (foundType) {
+        onCompanyChange('businessTypeId', foundType.id);
+      }
+      
+      alert(`Dados do CNPJ obtidos com sucesso!\nAtividade: ${cnaeDesc}\nSetor: ${sector === 'INDUSTRIA' ? 'Indústria' : 'Comércio/Serviços'}\nGrau de Risco: GR-${risk}`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Não foi possível realizar a consulta automática do CNPJ. Digite os dados manualmente.');
+    } finally {
+      setIsFetchingCnpj(false);
+    }
+  };
+
   // --- Helpers ---
   const formatCNPJ = (value: string) => {
     const numeric = value.replace(/\D/g, '');
@@ -360,14 +424,30 @@ export const ChecklistTool: React.FC<Props> = ({
                  </div>
                  <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">CNPJ (Matriz)</label>
-                    <input 
-                      type="text" 
-                      value={company.cnpj}
-                      maxLength={18}
-                      onChange={e => onCompanyChange('cnpj', formatCNPJ(e.target.value))}
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none font-mono text-slate-700"
-                      placeholder="00.000.000/0001-00"
-                    />
+                    <div className="flex gap-2">
+                       <input 
+                         type="text" 
+                         value={company.cnpj}
+                         maxLength={18}
+                         onChange={e => onCompanyChange('cnpj', formatCNPJ(e.target.value))}
+                         className="flex-1 px-4 py-3 border border-slate-300 rounded-lg outline-none font-mono text-slate-700 focus:ring-2 focus:ring-emerald-500 text-sm"
+                         placeholder="00.000.000/0001-00"
+                       />
+                       <button
+                         type="button"
+                         onClick={fetchCnpjDataInChecklist}
+                         disabled={isFetchingCnpj || company.cnpj.replace(/\D/g, '').length < 14}
+                         className="px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 shrink-0"
+                         title="Buscar CNPJ na Base de Dados da Receita (Online)"
+                       >
+                         {isFetchingCnpj ? (
+                           <Loader2 size={12} className="animate-spin" />
+                         ) : (
+                           <Sparkles size={12} />
+                         )}
+                         <span className="hidden sm:inline">Consultar Receita</span>
+                       </button>
+                    </div>
                 </div>
              </div>
 

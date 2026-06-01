@@ -11,7 +11,8 @@ import {
   CheckCircle2, 
   Users, 
   Briefcase,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { getSupabaseClient } from '../services/supabaseClient';
 import { CompanyProfile, InternalProfile } from '../types';
@@ -21,7 +22,7 @@ interface AuthScreenProps {
 }
 
 const PRESET_CNAES = [
-  { code: '4711-3/02', desc: 'Comércio Varejista - Geral', risk: '1' },
+  { code: '4711-3/02', desc: 'Comércio Varejista - Geral', risk: '2' },
   { code: '5611-2/01', desc: 'Restaurantes e Similares', risk: '2' },
   { code: '4120-4/00', desc: 'Construção Cívil - Edifícios', risk: '4' },
   { code: '4930-2/02', desc: 'Transporte Rodoviário de Cargas', risk: '3' },
@@ -64,6 +65,69 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
   const [compSector, setCompSector] = useState<'COMERCIO_SERVICOS' | 'INDUSTRIA'>('COMERCIO_SERVICOS');
   const [compCnae, setCompCnae] = useState(PRESET_CNAES[0].code);
   const [compRisk, setCompRisk] = useState(PRESET_CNAES[0].risk);
+
+  const [isFetchingCnpj, setIsFetchingCnpj] = useState(false);
+
+  const fetchCnpjDataFromAPI = async () => {
+    const cleanCnpj = compCnpj.replace(/\D/g, '');
+    if (cleanCnpj.length < 14) {
+      setErrorMessage('CNPJ deve conter 14 dígitos para consulta.');
+      return;
+    }
+    setIsFetchingCnpj(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cleanCnpj}`);
+      if (!res.ok) {
+        throw new Error('Empresa não encontrada na base pública da Receita Federal.');
+      }
+      const data = await res.json();
+      
+      // Company Name
+      const cleanName = data.nome_fantasia || data.razao_social || '';
+      if (cleanName) {
+        setCompName(cleanName);
+      }
+      
+      // CNAE
+      const cnaeFiscalStr = String(data.cnae_fiscal || '');
+      const cleanCnae = cnaeFiscalStr.replace(/\D/g, '');
+      
+      let displayCnae = '';
+      if (cleanCnae.length === 7) {
+        displayCnae = `${cleanCnae.substring(0, 4)}-${cleanCnae.substring(4, 5)}/${cleanCnae.substring(5, 7)}`;
+      } else {
+        displayCnae = cleanCnae;
+      }
+      
+      const { CNAE_LIST } = await import('../constants');
+      let risk = '1';
+      let matchedCnaeInDb = CNAE_LIST.find(item => {
+        const itemClean = item.code.replace(/\D/g, '');
+        return cleanCnae.startsWith(itemClean) || itemClean.startsWith(cleanCnae);
+      });
+      
+      if (matchedCnaeInDb) {
+        risk = matchedCnaeInDb.risk;
+      }
+      
+      const cnaeDesc = data.cnae_fiscal_descricao || matchedCnaeInDb?.desc || 'Atividade Comercial';
+      const division = parseInt(cleanCnae.substring(0, 2)) || 0;
+      const sector = (division >= 5 && division <= 43) ? 'INDUSTRIA' : 'COMERCIO_SERVICOS';
+      
+      setCompCnae(displayCnae || cleanCnae);
+      setCompRisk(risk);
+      setCompSector(sector);
+      
+      setSuccessMessage(`Dados consultados com sucesso! Atividade: ${cnaeDesc}`);
+    } catch (err: any) {
+      console.error('API CNPJ Fetch Error:', err);
+      setErrorMessage(`Consulta online indisponível ou CNPJ não localizado. Por favor, digite os dados manualmente.`);
+    } finally {
+      setIsFetchingCnpj(false);
+    }
+  };
 
   // Departments & Processes Selection
   const [selectedDepts, setSelectedDepts] = useState<string[]>(['admin', 'prod', 'log']);
@@ -530,8 +594,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">CNPJ Matriz</label>
                         <input 
                           type="text" 
@@ -543,17 +607,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
                           className="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 outline-none focus:ring-2 focus:ring-emerald-500/40 text-xs font-mono transition-all"
                         />
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Nº Funcionários</label>
-                        <input 
-                          type="number" 
-                          required
-                          value={compEmployees}
-                          onChange={e => setCompEmployees(e.target.value)}
-                          placeholder="Quantidade"
-                          className="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 outline-none focus:ring-2 focus:ring-emerald-500/40 text-xs transition-all"
-                        />
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          onClick={fetchCnpjDataFromAPI}
+                          disabled={isFetchingCnpj || compCnpj.replace(/\D/g, '').length < 14}
+                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95"
+                          title="Buscar dados reais do CNPJ na base da Receita Federal"
+                        >
+                          {isFetchingCnpj ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={12} />
+                          )}
+                          <span>Buscar API</span>
+                        </button>
                       </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 font-semibold">Nº Funcionários (Total)</label>
+                      <input 
+                        type="number" 
+                        required
+                        value={compEmployees}
+                        onChange={e => setCompEmployees(e.target.value)}
+                        placeholder="Quantidade de funcionários"
+                        className="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 outline-none focus:ring-2 focus:ring-emerald-500/40 text-xs transition-all"
+                      />
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
