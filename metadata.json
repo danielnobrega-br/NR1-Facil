@@ -1,0 +1,6 @@
+{
+  "name": "SafetyDiagnostic Pro",
+  "description": "Uma ferramenta profissional para diagnóstico de conformidade NR-1 / PGR e avaliação de maturidade em cultura de segurança (GRO).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
