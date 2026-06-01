@@ -58,6 +58,7 @@ const App: React.FC = () => {
     sector: 'COMERCIO_SERVICOS', // Default
     cnae: '', 
     riskDegree: '1',
+    secondaryCnaes: [],
     porte_ibge: 'Micro',
     perfil_interno: InternalProfile.MICRO_LITE,
     branches: []
@@ -232,6 +233,7 @@ const App: React.FC = () => {
       sector: 'COMERCIO_SERVICOS',
       cnae: '', 
       riskDegree: '1',
+      secondaryCnaes: [],
       porte_ibge: 'Micro',
       perfil_interno: InternalProfile.MICRO_LITE,
       branches: []
@@ -654,6 +656,9 @@ const App: React.FC = () => {
         <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm/50 backdrop-blur-md bg-white/90">
            <div className="flex flex-col gap-1.5 flex-1">
                <div className="flex items-center gap-3">
+                  <div className="hidden md:flex bg-emerald-600/10 p-1.5 rounded-lg border border-emerald-500/20 text-emerald-600 shadow-sm animate-in fade-in zoom-in-95 duration-300" title="Favicon NR1 Fácil">
+                      <ShieldCheck size={18} />
+                  </div>
                    <h2 className="text-lg md:text-2xl font-bold text-slate-800">
                      {activeTab === ToolType.DASHBOARD && 'Central de Consultoria'}
                      {activeTab === ToolType.CHECKLIST && 'Diagnóstico NR-1'}

@@ -61,6 +61,12 @@ export interface Branch {
   contracts: Contract[];
 }
 
+export interface CompanyCnae {
+  code: string;
+  description: string;
+  riskDegree: string;
+}
+
 export interface CompanyProfile {
   name: string;
   cnpj: string;
@@ -69,6 +75,7 @@ export interface CompanyProfile {
   cnae: string;
   cnaeDescription?: string;
   riskDegree: string;
+  secondaryCnaes?: CompanyCnae[];
   porte_ibge?: string;
   perfil_interno?: InternalProfile;
   businessTypeId?: string;

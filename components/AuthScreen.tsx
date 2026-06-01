@@ -65,6 +65,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
   const [compSector, setCompSector] = useState<'COMERCIO_SERVICOS' | 'INDUSTRIA'>('COMERCIO_SERVICOS');
   const [compCnae, setCompCnae] = useState(PRESET_CNAES[0].code);
   const [compRisk, setCompRisk] = useState(PRESET_CNAES[0].risk);
+  const [availableCnaes, setAvailableCnaes] = useState(PRESET_CNAES);
 
   const [isFetchingCnpj, setIsFetchingCnpj] = useState(false);
 
@@ -116,7 +117,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
       const division = parseInt(cleanCnae.substring(0, 2)) || 0;
       const sector = (division >= 5 && division <= 43) ? 'INDUSTRIA' : 'COMERCIO_SERVICOS';
       
-      setCompCnae(displayCnae || cleanCnae);
+      // Register custom CNAE dynamically so the select dropdown renders it properly
+      const displayOrCleanCode = displayCnae || cleanCnae;
+      const isAlreadyInPresets = availableCnaes.some(c => c.code === displayOrCleanCode);
+      if (!isAlreadyInPresets && displayOrCleanCode) {
+        setAvailableCnaes(prev => [
+          ...prev,
+          { code: displayOrCleanCode, desc: cnaeDesc, risk: risk }
+        ]);
+      }
+      
+      setCompCnae(displayOrCleanCode);
       setCompRisk(risk);
       setCompSector(sector);
       
@@ -151,7 +162,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
 
   const handleCnaeChange = (code: string) => {
     setCompCnae(code);
-    const preset = PRESET_CNAES.find(c => c.code === code);
+    const preset = availableCnaes.find(c => c.code === code);
     if (preset) {
       setCompRisk(preset.risk);
     }
@@ -205,7 +216,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
           localStorage.setItem('nr1_local_users', JSON.stringify(localUsers));
 
           // Generate custom company profile based on department/process wizard selection
-          const presetCnae = PRESET_CNAES.find(c => c.code === compCnae);
+          const presetCnae = availableCnaes.find(c => c.code === compCnae);
           
           // Build branches corresponding chosen departments
           const generatedBranches = selectedDepts.map(deptId => {
@@ -227,6 +238,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
             cnae: compCnae,
             cnaeDescription: presetCnae ? presetCnae.desc : 'Atividade Comercial',
             riskDegree: compRisk,
+            secondaryCnaes: [],
             porte_ibge: parseInt(compEmployees) < 10 ? 'Micro' : parseInt(compEmployees) < 50 ? 'Pequena' : 'Média',
             perfil_interno: parseInt(compEmployees) < 10 ? InternalProfile.MICRO_LITE : InternalProfile.PEQUENA_STANDARD,
             branches: generatedBranches
@@ -344,7 +356,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
 
         if (data.user) {
           // Construct default company profile and branches based on wizard setup
-          const presetCnae = PRESET_CNAES.find(c => c.code === compCnae);
+          const presetCnae = availableCnaes.find(c => c.code === compCnae);
           const generatedBranches = selectedDepts.map(deptId => {
             const dept = STANDARD_DEPARTMENTS.find(d => d.id === deptId);
             return {
@@ -364,6 +376,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
             cnae: compCnae,
             cnaeDescription: presetCnae ? presetCnae.desc : 'Atividade Cadastrada',
             riskDegree: compRisk,
+            secondaryCnaes: [],
             porte_ibge: parseInt(compEmployees) < 10 ? 'Micro' : parseInt(compEmployees) < 50 ? 'Pequena' : 'Média',
             perfil_interno: parseInt(compEmployees) < 10 ? InternalProfile.MICRO_LITE : InternalProfile.PEQUENA_STANDARD,
             branches: generatedBranches
@@ -434,6 +447,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
         cnae: '47.11-3/02',
         cnaeDescription: 'Comércio varejista de mercadorias em geral, com predominância de produtos alimentícios - hipermercados e supermercados',
         riskDegree: '2',
+        secondaryCnaes: [],
         porte_ibge: 'Pequena',
         perfil_interno: InternalProfile.PEQUENA_STANDARD,
         branches: [
@@ -722,7 +736,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onSuccess }) => {
                           onChange={e => handleCnaeChange(e.target.value)}
                           className="w-full px-4 py-3 bg-slate-950/80 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-500 outline-none focus:ring-2 focus:ring-emerald-500/40 text-xs transition-all"
                         >
-                          {PRESET_CNAES.map(c => (
+                          {availableCnaes.map(c => (
                             <option key={c.code} value={c.code}>{c.code} ({c.desc.slice(0, 15)}...)</option>
                           ))}
                         </select>

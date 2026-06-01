@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { CHECKLIST_ITEMS, CALCULATE_CHECKLIST_LEVEL, CNAE_LIST, GET_RISK_DEGREE, GET_CNAE_DETAILS, BUSINESS_TYPES, GET_BUSINESS_TYPE_BY_CNAE } from '../constants';
-import { ChecklistState, CompanyProfile, InternalProfile, Branch, Contract, ChecklistItem } from '../types';
+import { ChecklistState, CompanyProfile, InternalProfile, Branch, Contract, ChecklistItem, CompanyCnae } from '../types';
 import { CheckCircle2, ShieldAlert, Check, Building2, ArrowRight, FileText, Download, PieChart as PieChartIcon, Printer, Briefcase, Factory, Search, AlertTriangle, AlertCircle, XCircle, LayoutGrid, Zap, ChevronDown, Wand2, BookOpen, Target, Calendar, User, Plus, Trash2, MapPin, Upload, FileSpreadsheet, Loader2, Save, FolderOpen, RefreshCw, MessageSquare, ClipboardCheck, Sparkles } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
@@ -26,6 +26,16 @@ export const ChecklistTool: React.FC<Props> = ({
   const [cnaeSearch, setCnaeSearch] = useState('');
   const [showCnaeDropdown, setShowCnaeDropdown] = useState(false);
   const [showSimulateOptions, setShowSimulateOptions] = useState(false);
+
+  // Secondary CNAEs management state
+  const [secondaryCnaeSearch, setSecondaryCnaeSearch] = useState('');
+  const [showSecondaryCnaeDropdown, setShowSecondaryCnaeDropdown] = useState(false);
+
+  useEffect(() => {
+    if (company.cnae && !cnaeSearch) {
+      setCnaeSearch(company.cnaeDescription ? `${company.cnae} - ${company.cnaeDescription}` : company.cnae);
+    }
+  }, [company.cnae, company.cnaeDescription]);
 
   // Branch & Contract Management State
   const [isAddingBranch, setIsAddingBranch] = useState(false);
@@ -75,31 +85,76 @@ export const ChecklistTool: React.FC<Props> = ({
         displayCnae = cleanCnae;
       }
       
-      let risk = '1';
+      let primaryRisk = '1';
       let matchedCnaeInDb = CNAE_LIST.find(item => {
         const itemClean = item.code.replace(/\D/g, '');
         return cleanCnae.startsWith(itemClean) || itemClean.startsWith(cleanCnae);
       });
       
       if (matchedCnaeInDb) {
-        risk = matchedCnaeInDb.risk;
+        primaryRisk = matchedCnaeInDb.risk;
       }
       
       const cnaeDesc = data.cnae_fiscal_descricao || matchedCnaeInDb?.desc || 'Atividade Comercial';
       const division = parseInt(cleanCnae.substring(0, 2)) || 0;
       const sector = (division >= 5 && division <= 43) ? 'INDUSTRIA' : 'COMERCIO_SERVICOS';
       
+      // Parse secondary CNAEs from BrasilAPI
+      const secondaryCnaesListObj: CompanyCnae[] = [];
+      if (Array.isArray(data.cnaes_secundarios)) {
+        data.cnaes_secundarios.forEach((sec: any) => {
+          const rawSecCode = String(sec.codigo || '');
+          const cleanSecCode = rawSecCode.replace(/\D/g, '');
+          let displaySecCode = '';
+          if (cleanSecCode.length === 7) {
+            displaySecCode = `${cleanSecCode.substring(0, 4)}-${cleanSecCode.substring(4, 5)}/${cleanSecCode.substring(5, 7)}`;
+          } else {
+            displaySecCode = cleanSecCode;
+          }
+
+          let secRisk = '1';
+          const matchedSecDb = CNAE_LIST.find(item => {
+            const itemClean = item.code.replace(/\D/g, '');
+            return cleanSecCode.startsWith(itemClean) || itemClean.startsWith(cleanSecCode);
+          });
+          if (matchedSecDb) {
+            secRisk = matchedSecDb.risk;
+          }
+          secondaryCnaesListObj.push({
+            code: displaySecCode || cleanSecCode,
+            description: sec.descricao || 'Atividade Secundária',
+            riskDegree: secRisk
+          });
+        });
+      }
+
+      // Calculate absolute highest risk degree between primary & secondary
+      const allRisksMerged = [
+        parseInt(primaryRisk || '1'), 
+        ...secondaryCnaesListObj.map(c => parseInt(c.riskDegree || '1'))
+      ];
+      const maxRiskMerged = Math.max(...allRisksMerged).toString();
+      
       onCompanyChange('cnae', displayCnae || cleanCnae);
       onCompanyChange('cnaeDescription', cnaeDesc);
-      onCompanyChange('riskDegree', risk);
+      onCompanyChange('secondaryCnaes', secondaryCnaesListObj);
+      onCompanyChange('riskDegree', maxRiskMerged);
       onCompanyChange('sector', sector);
+      
+      // Update local search text state to clearly display the matched/obtained CNAE.
+      setCnaeSearch(`${displayCnae || cleanCnae} - ${cnaeDesc}`);
       
       const foundType = GET_BUSINESS_TYPE_BY_CNAE(displayCnae || cleanCnae) || GET_BUSINESS_TYPE_BY_CNAE(matchedCnaeInDb?.code || '');
       if (foundType) {
         onCompanyChange('businessTypeId', foundType.id);
       }
       
-      alert(`Dados do CNPJ obtidos com sucesso!\nAtividade: ${cnaeDesc}\nSetor: ${sector === 'INDUSTRIA' ? 'Indústria' : 'Comércio/Serviços'}\nGrau de Risco: GR-${risk}`);
+      let successAlertMsg = `Dados do CNPJ obtidos com sucesso!\nAtividade Principal: ${cnaeDesc}\nSetor: ${sector === 'INDUSTRIA' ? 'Indústria' : 'Comércio/Serviços'}`;
+      if (secondaryCnaesListObj.length > 0) {
+        successAlertMsg += `\nCNAEs Secundários: ${secondaryCnaesListObj.length} importados de forma automática.`;
+      }
+      successAlertMsg += `\nGrau de Risco Consolidado (Máximo): GR-${maxRiskMerged}`;
+      alert(successAlertMsg);
     } catch (err: any) {
       console.error(err);
       alert('Não foi possível realizar a consulta automática do CNPJ. Digite os dados manualmente.');
@@ -248,10 +303,35 @@ export const ChecklistTool: React.FC<Props> = ({
     }).slice(0, 10); // Limit results
   }, [cnaeSearch]);
 
+  const filteredSecondaryCnaes = useMemo(() => {
+    if (!secondaryCnaeSearch) return [];
+    
+    // Normalize input
+    const lowerInput = secondaryCnaeSearch.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    return CNAE_LIST.filter(c => {
+        const cleanCode = c.code.replace(/[^a-z0-9]/g, '');
+        const desc = c.desc.toLowerCase();
+        
+        // Search by Description
+        if (desc.includes(lowerInput)) return true;
+
+        // Search by Code (Smart Match)
+        if (cleanCode.startsWith(lowerInput) || lowerInput.startsWith(cleanCode)) return true;
+
+        return false;
+    }).slice(0, 10);
+  }, [secondaryCnaeSearch]);
+
   const selectCnae = (code: string, desc: string, risk: string) => {
       onCompanyChange('cnae', code);
       onCompanyChange('cnaeDescription', desc);
-      onCompanyChange('riskDegree', risk);
+      
+      const secList = company.secondaryCnaes || [];
+      const allRisks = [parseInt(risk || '1'), ...secList.map(c => parseInt(c.riskDegree || '1'))];
+      const maxRisk = Math.max(...allRisks).toString();
+      onCompanyChange('riskDegree', maxRisk);
+
       setCnaeSearch(`${code} - ${desc}`);
       setShowCnaeDropdown(false);
 
@@ -265,8 +345,58 @@ export const ChecklistTool: React.FC<Props> = ({
   const clearCnae = () => {
       onCompanyChange('cnae', '');
       onCompanyChange('cnaeDescription', '');
-      onCompanyChange('riskDegree', '');
+      
+      const secList = company.secondaryCnaes || [];
+      const allRisks = [1, ...secList.map(c => parseInt(c.riskDegree || '1'))];
+      const maxRisk = Math.max(...allRisks).toString();
+      onCompanyChange('riskDegree', maxRisk);
+      
       setCnaeSearch('');
+  };
+
+  const addSecondaryCnae = (code: string, desc: string, risk: string) => {
+      const list = company.secondaryCnaes || [];
+      if (list.some(c => c.code === code)) {
+          alert('CNAE secundário já adicionado!');
+          return;
+      }
+      const newList = [...list, { code, description: desc, riskDegree: risk }];
+      onCompanyChange('secondaryCnaes', newList);
+      
+      // Calculate max risk dynamically
+      let primaryRisk = '1';
+      const cleanPrimary = company.cnae.replace(/\D/g, '');
+      const matched = CNAE_LIST.find(item => {
+          const itemClean = item.code.replace(/\D/g, '');
+          return cleanPrimary.startsWith(itemClean) || itemClean.startsWith(cleanPrimary);
+      });
+      if (matched) primaryRisk = matched.risk;
+
+      const allRisks = [parseInt(primaryRisk || '1'), ...newList.map(c => parseInt(c.riskDegree || '1'))];
+      const maxRisk = Math.max(...allRisks).toString();
+      onCompanyChange('riskDegree', maxRisk);
+
+      setSecondaryCnaeSearch('');
+      setShowSecondaryCnaeDropdown(false);
+  };
+
+  const removeSecondaryCnae = (code: string) => {
+      const list = company.secondaryCnaes || [];
+      const newList = list.filter(c => c.code !== code);
+      onCompanyChange('secondaryCnaes', newList);
+      
+      // Calculate max risk dynamically
+      let primaryRisk = '1';
+      const cleanPrimary = company.cnae.replace(/\D/g, '');
+      const matched = CNAE_LIST.find(item => {
+          const itemClean = item.code.replace(/\D/g, '');
+          return cleanPrimary.startsWith(itemClean) || itemClean.startsWith(cleanPrimary);
+      });
+      if (matched) primaryRisk = matched.risk;
+
+      const allRisks = [parseInt(primaryRisk || '1'), ...newList.map(c => parseInt(c.riskDegree || '1'))];
+      const maxRisk = Math.max(...allRisks).toString();
+      onCompanyChange('riskDegree', maxRisk);
   };
 
   const applySimulation = (scenario: 'PERFECT' | 'REALISTIC' | 'CRITICAL') => {
@@ -458,7 +588,7 @@ export const ChecklistTool: React.FC<Props> = ({
                       type="number" 
                       value={company.employees}
                       onChange={e => onCompanyChange('employees', e.target.value)}
-                      className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-emerald-500"
                       placeholder="0"
                     />
                 </div>
@@ -474,7 +604,7 @@ export const ChecklistTool: React.FC<Props> = ({
                                 if(e.target.value === '') clearCnae();
                             }}
                             onFocus={() => setShowCnaeDropdown(true)}
-                            className="w-full pl-10 pr-8 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full pl-10 pr-8 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
                             placeholder="Código (Classe ou Subclasse) ou nome..."
                         />
                         <Search className="absolute left-3 top-3.5 text-slate-400" size={18} />
@@ -491,6 +621,7 @@ export const ChecklistTool: React.FC<Props> = ({
                                 filteredCnaes.map(c => (
                                     <button
                                         key={c.code}
+                                        type="button"
                                         onClick={() => selectCnae(c.code, c.desc, c.risk)}
                                         className="w-full text-left px-4 py-3 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors"
                                     >
@@ -512,6 +643,103 @@ export const ChecklistTool: React.FC<Props> = ({
                     )}
                 </div>
              </div>
+
+              {/* CNAEs Secundários Section */}
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                      <div className="flex items-center gap-2">
+                          <Plus size={16} className="text-emerald-600" />
+                          <h3 className="text-xs font-bold text-slate-600 uppercase tracking-widest">CNAEs Secundários / Atividades de Apoio</h3>
+                      </div>
+                      <span className="text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
+                          {(company.secondaryCnaes || []).length} Adicionado(s)
+                      </span>
+                  </div>
+
+                  {/* Render secondary CNAEs search inside */}
+                  <div className="relative">
+                      <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Buscar e Adicionar CNAE Secundário</label>
+                      <div className="relative">
+                          <input 
+                              type="text"
+                              value={secondaryCnaeSearch}
+                              onChange={(e) => {
+                                  setSecondaryCnaeSearch(e.target.value);
+                                  setShowSecondaryCnaeDropdown(true);
+                              }}
+                              onFocus={() => setShowSecondaryCnaeDropdown(true)}
+                              className="w-full pl-10 pr-24 py-2.5 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                              placeholder="Digite código (ex: 4721) ou descrição do CNAE..."
+                          />
+                          <Search className="absolute left-3 top-3.5 text-slate-400" size={14} />
+                          {secondaryCnaeSearch && (
+                              <button 
+                                  type="button"
+                                  onClick={() => setSecondaryCnaeSearch('')} 
+                                  className="absolute right-3 top-3.5 text-slate-400 hover:text-red-500 text-xs font-bold"
+                              >
+                                  Limpar
+                              </button>
+                          )}
+                      </div>
+
+                      {showSecondaryCnaeDropdown && secondaryCnaeSearch && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                              {filteredSecondaryCnaes.length > 0 ? (
+                                  filteredSecondaryCnaes.map(c => (
+                                      <button
+                                          key={c.code}
+                                          type="button"
+                                          onClick={() => addSecondaryCnae(c.code, c.desc, c.risk)}
+                                          className="w-full text-left px-4 py-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 transition-colors"
+                                      >
+                                          <div className="font-bold text-slate-800 text-xs flex justify-between">
+                                              <span>{c.code}</span>
+                                              <span className="bg-slate-100 text-slate-500 px-1 py-0.5 rounded text-[10px]">GR: {c.risk}</span>
+                                          </div>
+                                          <div className="text-[11px] text-slate-500 truncate">{c.desc}</div>
+                                      </button>
+                                  ))
+                              ) : (
+                                  <div className="p-3 text-xs text-slate-400 text-center">
+                                      Nenhum CNAE correspondente na base interna.
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+
+                  {/* Render secondary CNAEs as a beautiful list */}
+                  {(company.secondaryCnaes || []).length > 0 ? (
+                      <div className="grid gap-2 text-xs">
+                          {(company.secondaryCnaes || []).map((c, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                                  <div className="flex items-start gap-2.5">
+                                      <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded">
+                                          {c.code}
+                                      </span>
+                                      <div className="flex-1 min-w-0">
+                                          <p className="text-slate-800 font-medium leading-normal line-clamp-1">{c.description}</p>
+                                          <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Grau de Risco: GR-{c.riskDegree}</p>
+                                      </div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={() => removeSecondaryCnae(c.code)}
+                                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-rose-50 rounded transition-colors"
+                                      title="Remover CNAE secundário"
+                                  >
+                                      <Trash2 size={14} />
+                                  </button>
+                              </div>
+                          ))}
+                      </div>
+                  ) : (
+                      <p className="text-xs text-slate-400 text-center italic py-2">
+                          Nenhum CNAE secundário cadastrado. Utilize o campo acima se a empresa possuir atividades de apoio ou múltiplos CNAEs nas filiais/atividades.
+                      </p>
+                  )}
+              </div>
 
              {/* Business Type Selection (Auto-selected by CNAE) */}
              <div data-tour="tour-business-type">
