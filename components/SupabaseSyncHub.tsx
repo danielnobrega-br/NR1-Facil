@@ -51,12 +51,72 @@ interface SupabaseSyncHubProps {
 
 const SQL_MIGRATION_CODE = `-- =========================================================
 -- SYSTEM MIGRATION: CONFIGURAÇÃO DE TABELAS DO SAFETYDIAGNOSTIC (NR-1 / GRO)
+-- COM PROFILE E ID_CLIENTE (VINCULADO AO USUÁRIO AUTENTICADO)
 -- EXECUTE ESTE SCRIPT NO EDITOR SQL DO SEU PROJETO SUPABASE
 -- =========================================================
 
--- 1. Criação do backup completo da área de trabalho (Workspace Backups)
+-- 1. Criação da Tabela de Perfis de Usuário (id_cliente)
+CREATE TABLE IF NOT EXISTS nr1_profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Ativar RLS para perfis
+ALTER TABLE nr1_profiles ENABLE ROW LEVEL SECURITY;
+
+-- Políticas de RLS para perfis
+DROP POLICY IF EXISTS "Leitura de perfil próprio" ON nr1_profiles;
+CREATE POLICY "Leitura de perfil próprio" ON nr1_profiles
+    FOR SELECT USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Modificação de perfil próprio" ON nr1_profiles;
+CREATE POLICY "Modificação de perfil próprio" ON nr1_profiles
+    FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+
+-- Gatilho automático para inserção de novo usuário no Supabase Auth criar perfil
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.nr1_profiles (id, email, full_name, created_at, updated_at)
+  VALUES (
+    new.id,
+    new.email,
+    COALESCE(new.raw_user_meta_data->>'full_name', 'Usuário Safety'),
+    timezone('utc'::text, now()),
+    timezone('utc'::text, now())
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 2. Tabela relacional de empresas (Cadastro Principal) com id_cliente
+CREATE TABLE IF NOT EXISTS nr1_companies (
+    cnpj TEXT PRIMARY KEY,
+    id_cliente UUID REFERENCES nr1_profiles(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    employees INTEGER DEFAULT 0,
+    sector TEXT NOT NULL,
+    cnae TEXT,
+    risk_degree TEXT,
+    porte_ibge TEXT,
+    perfil_interno TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3. Criação do backup completo da área de trabalho (Workspace Backups) com id_cliente
 CREATE TABLE IF NOT EXISTS nr1_workspace_backup (
     id TEXT PRIMARY KEY,
+    id_cliente UUID REFERENCES nr1_profiles(id) ON DELETE CASCADE,
     project_name TEXT NOT NULL,
     company_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
     checklist_data JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -70,21 +130,7 @@ CREATE TABLE IF NOT EXISTS nr1_workspace_backup (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. Tabela relacional de empresas (Cadastro Principal)
-CREATE TABLE IF NOT EXISTS nr1_companies (
-    cnpj TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    employees INTEGER DEFAULT 0,
-    sector TEXT NOT NULL,
-    cnae TEXT,
-    risk_degree TEXT,
-    porte_ibge TEXT,
-    perfil_interno TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
--- 3. Tabela relacional de Inventário de Riscos Ocupacionais (PGR)
+-- 4. Tabela relacional de Inventário de Riscos Ocupacionais (PGR)
 CREATE TABLE IF NOT EXISTS nr1_risks (
     id TEXT PRIMARY KEY,
     company_cnpj TEXT REFERENCES nr1_companies(cnpj) ON DELETE CASCADE,
@@ -98,7 +144,7 @@ CREATE TABLE IF NOT EXISTS nr1_risks (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 4. Tabela relacional de Planos de Ação GRO / PGR
+-- 5. Tabela relacional de Planos de Ação GRO / PGR
 CREATE TABLE IF NOT EXISTS nr1_action_plans (
     id TEXT PRIMARY KEY,
     company_cnpj TEXT REFERENCES nr1_companies(cnpj) ON DELETE CASCADE,
@@ -122,26 +168,38 @@ ALTER TABLE nr1_companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nr1_risks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nr1_action_plans ENABLE ROW LEVEL SECURITY;
 
--- Criar políticas de acesso amplo público (ideal para protótipos e homologação rápida do cliente)
-CREATE POLICY "Permitir leitura total para todos" ON nr1_workspace_backup
-    FOR SELECT USING (true);
-CREATE POLICY "Permitir inserção e modificação total para todos" ON nr1_workspace_backup
-    FOR ALL WITH CHECK (true);
+-- Políticas de RLS restritas para o id_cliente
+DROP POLICY IF EXISTS "Leitura de backup individual" ON nr1_workspace_backup;
+CREATE POLICY "Leitura de backup individual" ON nr1_workspace_backup
+    FOR SELECT USING (id_cliente = auth.uid());
 
-CREATE POLICY "Permitir leitura de empresas" ON nr1_companies
-    FOR SELECT USING (true);
-CREATE POLICY "Permitir modificação de empresas" ON nr1_companies
-    FOR ALL WITH CHECK (true);
+DROP POLICY IF EXISTS "Modificação de backup individual" ON nr1_workspace_backup;
+CREATE POLICY "Modificação de backup individual" ON nr1_workspace_backup
+    FOR ALL USING (id_cliente = auth.uid()) WITH CHECK (id_cliente = auth.uid());
 
-CREATE POLICY "Permitir leitura de riscos" ON nr1_risks
-    FOR SELECT USING (true);
-CREATE POLICY "Permitir modificação de riscos" ON nr1_risks
-    FOR ALL WITH CHECK (true);
+DROP POLICY IF EXISTS "Leitura de empresas individual" ON nr1_companies;
+CREATE POLICY "Leitura de empresas individual" ON nr1_companies
+    FOR SELECT USING (id_cliente = auth.uid());
 
-CREATE POLICY "Permitir leitura de planos de acao" ON nr1_action_plans
-    FOR SELECT USING (true);
-CREATE POLICY "Permitir modificação de planos de acao" ON nr1_action_plans
-    FOR ALL WITH CHECK (true);
+DROP POLICY IF EXISTS "Modificação de empresas individual" ON nr1_companies;
+CREATE POLICY "Modificação de empresas individual" ON nr1_companies
+    FOR ALL USING (id_cliente = auth.uid()) WITH CHECK (id_cliente = auth.uid());
+
+DROP POLICY IF EXISTS "Acesso total de riscos por empresa do usuario" ON nr1_risks;
+CREATE POLICY "Acesso total de riscos por empresa do usuario" ON nr1_risks
+    FOR ALL USING (
+        company_cnpj IN (SELECT cnpj FROM nr1_companies WHERE id_cliente = auth.uid())
+    ) WITH CHECK (
+        company_cnpj IN (SELECT cnpj FROM nr1_companies WHERE id_cliente = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Acesso total de acoes por empresa do usuario" ON nr1_action_plans;
+CREATE POLICY "Acesso total de acoes por empresa do usuario" ON nr1_action_plans
+    FOR ALL USING (
+        company_cnpj IN (SELECT cnpj FROM nr1_companies WHERE id_cliente = auth.uid())
+    ) WITH CHECK (
+        company_cnpj IN (SELECT cnpj FROM nr1_companies WHERE id_cliente = auth.uid())
+    );
 `;
 
 export const SupabaseSyncHub: React.FC<SupabaseSyncHubProps> = ({
@@ -227,7 +285,9 @@ export const SupabaseSyncHub: React.FC<SupabaseSyncHubProps> = ({
 
   const fetchBackups = async () => {
     setLoadingBackups(true);
-    const backups = await listSupabaseWorkspaces();
+    const savedUser = localStorage.getItem('nr1_facil_user_v1');
+    const u = savedUser ? JSON.parse(savedUser) : null;
+    const backups = await listSupabaseWorkspaces(u?.id);
     setRecentBackups(backups);
     setLoadingBackups(false);
   };
@@ -251,7 +311,9 @@ export const SupabaseSyncHub: React.FC<SupabaseSyncHubProps> = ({
     };
 
     const name = company.name || 'Empresa Sem Nome';
-    const result = await pushWorkspaceBackup(name, payload);
+    const savedUser = localStorage.getItem('nr1_facil_user_v1');
+    const u = savedUser ? JSON.parse(savedUser) : null;
+    const result = await pushWorkspaceBackup(name, payload, u?.id);
     
     if (result.success) {
       alert(result.message);
@@ -270,7 +332,9 @@ export const SupabaseSyncHub: React.FC<SupabaseSyncHubProps> = ({
     }
 
     setPulling(true);
-    const result = await pullWorkspaceBackup(cnpjToQuery);
+    const savedUser = localStorage.getItem('nr1_facil_user_v1');
+    const u = savedUser ? JSON.parse(savedUser) : null;
+    const result = await pullWorkspaceBackup(cnpjToQuery, u?.id);
     
     if (result.success && result.data) {
       const d = result.data;

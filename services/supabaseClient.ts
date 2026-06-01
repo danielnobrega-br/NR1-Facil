@@ -139,7 +139,8 @@ export interface SyncPayload {
  */
 export const pushWorkspaceBackup = async (
   projectName: string,
-  state: SyncPayload
+  state: SyncPayload,
+  idCliente?: string
 ): Promise<{ success: boolean; message: string }> => {
   const client = getSupabaseClient();
   if (!client) {
@@ -154,6 +155,7 @@ export const pushWorkspaceBackup = async (
       .from('nr1_workspace_backup')
       .upsert({
         id,
+        id_cliente: idCliente || null,
         project_name: projectName || state.company.name || 'Empresa NR1',
         company_profile: state.company,
         checklist_data: state.checklistData,
@@ -171,7 +173,7 @@ export const pushWorkspaceBackup = async (
     }
 
     // Now, push structured relational records as fallback / parallel data demonstration!
-    await syncRelationalTables(state);
+    await syncRelationalTables(state, idCliente);
 
     return {
       success: true,
@@ -189,7 +191,7 @@ export const pushWorkspaceBackup = async (
 /**
  * Synchronizes relational tables for high fidelity database design
  */
-const syncRelationalTables = async (state: SyncPayload) => {
+const syncRelationalTables = async (state: SyncPayload, idCliente?: string) => {
   const client = getSupabaseClient();
   if (!client) return;
 
@@ -199,6 +201,7 @@ const syncRelationalTables = async (state: SyncPayload) => {
     // 1. Sync Company Profile
     await client.from('nr1_companies').upsert({
       cnpj,
+      id_cliente: idCliente || null,
       name: state.company.name || 'Sem Nome',
       employees: parseInt(state.company.employees) || 0,
       sector: state.company.sector,
@@ -251,10 +254,11 @@ const syncRelationalTables = async (state: SyncPayload) => {
 };
 
 /**
- * Pull workspace backup from Supabase by CNPJ-based/id
+ * Pull workspace backup from Supabase by CNPJ-based/id for a specific client id (if provided)
  */
 export const pullWorkspaceBackup = async (
-  cnpj: string
+  cnpj: string,
+  idCliente?: string
 ): Promise<{ success: boolean; message: string; data?: SyncPayload }> => {
   const client = getSupabaseClient();
   if (!client) {
@@ -264,11 +268,16 @@ export const pullWorkspaceBackup = async (
   try {
     const id = `nr1_${cnpj.replace(/\D/g, '') || 'workspace'}`;
 
-    const { data, error } = await client
+    let query = client
       .from('nr1_workspace_backup')
       .select('*')
-      .eq('id', id)
-      .maybeSingle();
+      .eq('id', id);
+
+    if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
+    }
+
+    const { data, error } = await query.maybeSingle();
 
     if (error) {
       throw error;
@@ -307,17 +316,22 @@ export const pullWorkspaceBackup = async (
 };
 
 /**
- * Lists all active backup workspaces saved on Supabase
+ * Lists all active backup workspaces saved on Supabase for a specific client id (if provided)
  */
-export const listSupabaseWorkspaces = async (): Promise<{ id: string; project_name: string; updated_at: string }[]> => {
+export const listSupabaseWorkspaces = async (idCliente?: string): Promise<{ id: string; project_name: string; updated_at: string }[]> => {
   const client = getSupabaseClient();
   if (!client) return [];
 
   try {
-    const { data, error } = await client
+    let query = client
       .from('nr1_workspace_backup')
-      .select('id, project_name, updated_at')
-      .order('updated_at', { ascending: false });
+      .select('id, project_name, updated_at');
+
+    if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
+    }
+
+    const { data, error } = await query.order('updated_at', { ascending: false });
 
     if (error) throw error;
     return data || [];

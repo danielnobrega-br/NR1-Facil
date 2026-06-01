@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, CheckSquare, BarChart, ShieldCheck, FileWarning, GraduationCap, Users, Menu, X, ClipboardList, Package, Brain, Trash, FileCheck, HelpCircle, PlayCircle, Database } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, BarChart, ShieldCheck, FileWarning, GraduationCap, Users, Menu, X, ClipboardList, Package, Brain, Trash, FileCheck, HelpCircle, PlayCircle, Database, LogOut } from 'lucide-react';
 import { ToolType, ChecklistState, MaturityState, CompanyProfile, ActionPlanItem, InternalProfile, SectorType, RiskItem, SectorAnalysis, ChecklistItem } from './types';
 import { ChecklistTool } from './components/ChecklistTool';
 import { MaturityTool } from './components/MaturityTool';
@@ -14,11 +14,22 @@ import { GlobalReportHub } from './components/GlobalReportHub';
 import { FaqHub } from './components/FaqHub';
 import { TutorialGuide } from './components/TutorialGuide';
 import { SupabaseSyncHub } from './components/SupabaseSyncHub';
-import { getSupabaseClient, pushWorkspaceBackup } from './services/supabaseClient';
+import { getSupabaseClient, pushWorkspaceBackup, listSupabaseWorkspaces, pullWorkspaceBackup } from './services/supabaseClient';
+import { AuthScreen } from './components/AuthScreen';
 
 const STORAGE_KEY = 'nr1_facil_db_v1';
 
+interface UserSession {
+  id: string;
+  email: string;
+  name: string;
+  isLocal: boolean;
+}
+
 const App: React.FC = () => {
+  // Current user state
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+
   // Updated default state to point to Dashboard
   const [activeTab, setActiveTab] = useState<ToolType>(ToolType.DASHBOARD);
   const [checklistData, setChecklistData] = useState<ChecklistState>({});
@@ -62,6 +73,16 @@ const App: React.FC = () => {
 
   // 1. Load Data from LocalStorage on Mount
   useEffect(() => {
+    // Restores active user first
+    const savedUser = localStorage.getItem('nr1_facil_user_v1');
+    if (savedUser) {
+      try {
+        setCurrentUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error("Erro ao carregar usuário salvo:", e);
+      }
+    }
+
     const savedData = localStorage.getItem(STORAGE_KEY);
     if (savedData) {
         try {
@@ -84,7 +105,7 @@ const App: React.FC = () => {
 
   // 2. Auto-Save Data to LocalStorage & Supabase Cloud on Change
   useEffect(() => {
-    if (!isDataLoaded) return; // Prevent overwriting with empty state during init
+    if (!isDataLoaded || !currentUser) return; // Prevent overwriting with empty state during init or before login
 
     const stateToSave = {
         company,
@@ -103,11 +124,11 @@ const App: React.FC = () => {
 
         // Check if Supabase is connected / configured
         const client = getSupabaseClient();
-        if (client) {
+        if (client && !currentUser.isLocal) {
             setSupabaseSyncStatus('SYNCING');
             try {
                 const projectName = company.name || 'Empresa NR1';
-                const result = await pushWorkspaceBackup(projectName, stateToSave);
+                const result = await pushWorkspaceBackup(projectName, stateToSave, currentUser.id);
                 if (result.success) {
                     setSupabaseSyncStatus('SUCCESS');
                     setLastSyncTime(new Date());
@@ -125,7 +146,105 @@ const App: React.FC = () => {
     }, 800); // 800ms debounce to prevent spamming transactions on fast typing
 
     return () => clearTimeout(handler);
-  }, [company, checklistData, checklistComments, customChecklistItems, maturityData, actions, risks, cultureSectors, isDataLoaded]);
+  }, [company, checklistData, checklistComments, customChecklistItems, maturityData, actions, risks, cultureSectors, isDataLoaded, currentUser]);
+
+  const handleAuthSuccess = (user: UserSession, defaultCompany?: CompanyProfile) => {
+    setCurrentUser(user);
+    localStorage.setItem('nr1_facil_user_v1', JSON.stringify(user));
+
+    if (defaultCompany) {
+      setCompany(defaultCompany);
+      setChecklistData({});
+      setChecklistComments({});
+      setCustomChecklistItems([]);
+      setMaturityData({});
+      setActions([]);
+      setRisks([]);
+      setCultureSectors([]);
+
+      const freshState = {
+        company: defaultCompany,
+        checklistData: {},
+        checklistComments: {},
+        customChecklistItems: [],
+        maturityData: {},
+        actions: [],
+        risks: [],
+        cultureSectors: []
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(freshState));
+
+      // Sync and Save to Supabase
+      const client = getSupabaseClient();
+      if (client && !user.isLocal) {
+        setSupabaseSyncStatus('SYNCING');
+        pushWorkspaceBackup(defaultCompany.name, freshState, user.id)
+          .then(res => {
+            if (res.success) {
+              setSupabaseSyncStatus('SUCCESS');
+              setLastSyncTime(new Date());
+            } else {
+              setSupabaseSyncStatus('ERROR');
+            }
+          })
+          .catch(() => setSupabaseSyncStatus('ERROR'));
+      }
+    } else {
+      // Login - restore latest backup
+      const client = getSupabaseClient();
+      if (client && !user.isLocal) {
+        setSupabaseSyncStatus('SYNCING');
+        listSupabaseWorkspaces(user.id)
+          .then(workspaces => {
+            if (workspaces && workspaces.length > 0) {
+              const latest = workspaces[0];
+              const cnpjFromId = latest.id.replace('nr1_', '');
+              pullWorkspaceBackup(cnpjFromId, user.id)
+                .then(res => {
+                  if (res.success && res.data) {
+                    const d = res.data;
+                    setCompany(d.company);
+                    setChecklistData(d.checklistData);
+                    setChecklistComments(d.checklistComments);
+                    setCustomChecklistItems(d.customChecklistItems);
+                    setMaturityData(d.maturityData);
+                    setActions(d.actions);
+                    setRisks(d.risks);
+                    setCultureSectors(d.cultureSectors);
+                    setSupabaseSyncStatus('SUCCESS');
+                    setLastSyncTime(new Date());
+                  }
+                });
+            }
+          })
+          .catch(e => console.warn('Could not pull user backup on login:', e));
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('nr1_facil_user_v1');
+    setCompany({
+      name: '', 
+      cnpj: '', 
+      employees: '', 
+      sector: 'COMERCIO_SERVICOS',
+      cnae: '', 
+      riskDegree: '1',
+      porte_ibge: 'Micro',
+      perfil_interno: InternalProfile.MICRO_LITE,
+      branches: []
+    });
+    setChecklistData({});
+    setChecklistComments({});
+    setCustomChecklistItems([]);
+    setMaturityData({});
+    setActions([]);
+    setRisks([]);
+    setCultureSectors([]);
+    setActiveTab(ToolType.DASHBOARD);
+  };
 
   // Scroll to top when switching tabs
   useEffect(() => {
@@ -348,6 +467,10 @@ const App: React.FC = () => {
 
   const supportedTutorialTabs = [ToolType.CHECKLIST, ToolType.RISK_TOOLS, ToolType.ACTION_PLAN];
 
+  if (!currentUser) {
+    return <AuthScreen onSuccess={handleAuthSuccess} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col md:flex-row">
       <TutorialGuide activeTab={activeTab} isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
@@ -358,9 +481,18 @@ const App: React.FC = () => {
             <ShieldCheck size={24} className="text-emerald-500" />
             <h1 className="font-bold">NR1 Fácil</h1>
          </div>
-         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-            {isMobileMenuOpen ? <X /> : <Menu />}
-         </button>
+         <div className="flex items-center gap-3">
+            <button 
+              onClick={handleLogout}
+              className="p-1 text-slate-400 hover:text-rose-450 transition-colors"
+              title="Sair da Conta"
+            >
+              <LogOut size={18} />
+            </button>
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+               {isMobileMenuOpen ? <X /> : <Menu />}
+            </button>
+         </div>
       </div>
 
       {/* Sidebar Navigation */}
@@ -458,16 +590,7 @@ const App: React.FC = () => {
             <span>Emitir PGR Completo</span>
           </button>
 
-          <div className="px-4 pb-2 pt-4">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Serviços de Nuvem</span>
-          </div>
-          <button 
-            onClick={() => handleNavigate(ToolType.SUPABASE_SYNC)}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors text-sm font-bold border border-emerald-500/30 ${activeTab === ToolType.SUPABASE_SYNC ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40' : 'bg-slate-850 text-emerald-300 hover:bg-slate-800 hover:text-emerald-100'}`}
-          >
-            <Database size={18} />
-            <span>Nuvem Supabase</span>
-          </button>
+
 
           <div className="mt-8 border-t border-slate-800 pt-4">
              <button 
@@ -495,43 +618,73 @@ const App: React.FC = () => {
           </div>
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
-           <div className="bg-slate-800/50 rounded-lg p-3 text-xs text-slate-400 border border-slate-700/50">
-              <p className="font-semibold text-slate-300 mb-1 flex items-center gap-2">
-                 <span className={`w-2 h-2 rounded-full ${process.env.API_KEY ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                 {process.env.API_KEY ? 'AI Connected' : 'Demo Mode'}
-              </p>
-              <p className="opacity-70">Fase 1: MVP</p>
+        <div className="p-4 border-t border-slate-800 space-y-3 bg-slate-950/20">
+           {currentUser && (
+             <div className="flex items-center justify-between gap-1.5 bg-slate-950/60 p-2 rounded-xl border border-slate-800">
+               <div className="flex items-center gap-2 truncate">
+                 <div className="w-8 h-8 rounded-lg bg-emerald-600 font-black text-xs text-slate-950 flex items-center justify-center shrink-0">
+                   {currentUser.name ? currentUser.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase() : 'US'}
+                 </div>
+                 <div className="truncate text-xs">
+                   <p className="font-bold text-slate-200 truncate">{currentUser.name}</p>
+                   <p className="text-[10px] text-slate-500 truncate">{currentUser.email}</p>
+                 </div>
+               </div>
+               <button 
+                 onClick={handleLogout}
+                 className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-rose-450 rounded-lg transition-colors shrink-0" 
+                 title="Sair da Conta"
+               >
+                 <LogOut size={16} />
+               </button>
+             </div>
+           )}
+
+           <div className="bg-slate-800/10 rounded-lg p-2.5 text-[9px] text-slate-400 border border-slate-850/60 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 font-medium">
+                 <span className={`w-1.5 h-1.5 rounded-full ${process.env.API_KEY ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+                 {process.env.API_KEY ? 'SST Conectado' : 'Fase MVP'}
+              </span>
+              <span>id_cliente OK</span>
            </div>
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <main ref={mainScrollRef} className="flex-1 overflow-y-auto h-screen">
         <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm/50 backdrop-blur-md bg-white/90">
-           <div className="flex items-center gap-3">
-               <h2 className="text-xl md:text-2xl font-bold text-slate-800">
-                 {activeTab === ToolType.DASHBOARD && 'Central de Consultoria'}
-                 {activeTab === ToolType.CHECKLIST && 'Diagnóstico NR-1'}
-                 {activeTab === ToolType.MATURITY && 'Maturidade de Cultura'}
-                 {activeTab === ToolType.RISK_TOOLS && 'Ferramentas de Risco (PGR)'}
-                 {activeTab === ToolType.ACTION_PLAN && 'Plano de Ação Integrado (GRO)'}
-                 {activeTab === ToolType.TRAINING && 'Educação Corporativa'}
-                 {activeTab === ToolType.CULTURE_ERGO && 'Fatores Humanos & Organizacionais'}
-                 {activeTab === ToolType.MENTAL_HEALTH && 'Gestão de Riscos Psicossociais'}
-                 {activeTab === ToolType.GLOBAL_REPORT && 'Relatório Master Integrado'}
-                 {activeTab === ToolType.FAQ && 'Perguntas Frequentes (FAQ)'}
-                  {activeTab === ToolType.SUPABASE_SYNC && 'Serviço de Sincronização Supabase' }
-               </h2>
+           <div className="flex flex-col gap-1.5 flex-1">
+               <div className="flex items-center gap-3">
+                   <h2 className="text-lg md:text-2xl font-bold text-slate-800">
+                     {activeTab === ToolType.DASHBOARD && 'Central de Consultoria'}
+                     {activeTab === ToolType.CHECKLIST && 'Diagnóstico NR-1'}
+                     {activeTab === ToolType.MATURITY && 'Maturidade de Cultura'}
+                     {activeTab === ToolType.RISK_TOOLS && 'Ferramentas de Risco (PGR)'}
+                     {activeTab === ToolType.ACTION_PLAN && 'Plano de Ação Integrado (GRO)'}
+                     {activeTab === ToolType.TRAINING && 'Educação Corporativa'}
+                     {activeTab === ToolType.CULTURE_ERGO && 'Fatores Humanos & Organizacionais'}
+                     {activeTab === ToolType.MENTAL_HEALTH && 'Gestão de Riscos Psicossociais'}
+                     {activeTab === ToolType.GLOBAL_REPORT && 'Relatório Master Integrado'}
+                     {activeTab === ToolType.FAQ && 'Perguntas Frequentes (FAQ)'}
+                     {activeTab === ToolType.SUPABASE_SYNC && 'Serviço de Sincronização Supabase' }
+                   </h2>
+                   
+                   {/* Contextual Tutorial Button */}
+                   {supportedTutorialTabs.includes(activeTab) && (
+                       <button 
+                           onClick={() => setIsTutorialOpen(true)}
+                           className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition-colors animate-in fade-in"
+                       >
+                           <PlayCircle size={14} /> Tutorial Guiado
+                       </button>
+                   )}
+               </div>
                
-               {/* Contextual Tutorial Button */}
-               {supportedTutorialTabs.includes(activeTab) && (
-                   <button 
-                       onClick={() => setIsTutorialOpen(true)}
-                       className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-full border border-emerald-200 hover:bg-emerald-100 transition-colors animate-in fade-in"
-                   >
-                       <PlayCircle size={14} /> Tutorial Guiado
-                   </button>
+               {/* Mobile/Narrow Screen Company Information Banner */}
+               {company.name && (
+                   <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 w-fit">
+                       🏢 <span className="truncate max-w-[240px] md:max-w-md">{company.name}</span>
+                       {company.cnpj && <span className="text-[10px] text-slate-400 font-mono font-normal">({company.cnpj})</span>}
+                   </span>
                )}
            </div>
 
@@ -561,11 +714,11 @@ const App: React.FC = () => {
                       {supabaseSyncStatus === 'ERROR' && (
                         <span
                           onClick={() => setActiveTab(ToolType.SUPABASE_SYNC)}
-                          className="cursor-pointer inline-flex items-center gap-1.5 px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 text-[10px] font-mono font-bold rounded-full border border-rose-500/20 transition-all animate-bounce mr-2"
-                          title="Erro de conexão ou tabelas ausentes no Supabase. Clique para corrigir!"
+                          className="cursor-pointer inline-flex items-center gap-1.5 px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-500 text-[10px] font-mono font-medium rounded-full border border-slate-300 transition-all mr-2"
+                          title="Usando armazenamento local persistente (Modo Offline)"
                         >
-                          <span className="w-1.5 h-1.5 bg-rose-500 rounded-full" />
-                          ERRO ATUALIZAÇÃO
+                          <span className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
+                          MODO LOCAL
                         </span>
                       )}
                       {supabaseSyncStatus === 'OFFLINE' && (
@@ -579,10 +732,10 @@ const App: React.FC = () => {
                         </span>
                       )}
                       {company.name ? company.name : 'Selecione uma Empresa'}
-                   </>
+                  </>
               </span>
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white font-bold shadow-md">
-                NF
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-xs font-bold shadow-md">
+                {currentUser?.name ? currentUser.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase() : 'SST'}
               </div>
            </div>
         </header>

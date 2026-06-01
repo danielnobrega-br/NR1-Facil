@@ -68,7 +68,12 @@ export const ResultsDashboard: React.FC<Props> = ({ checklist, maturity, company
          <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-6">
             <div>
                <div className="flex items-center gap-3 mb-2">
-                   <h1 className="text-3xl font-bold">Painel Geral</h1>
+                   <h1 className="text-3xl font-bold">{company.name || 'Painel Geral'}</h1>
+                    {company.cnpj && (
+                      <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono border border-slate-700 select-all">
+                        {company.cnpj}
+                      </span>
+                    )}
                    <span className="bg-emerald-500/20 text-emerald-300 text-xs font-bold px-3 py-1 rounded-full border border-emerald-500/50">
                        {company.porte_ibge || 'Nova'} Empresa
                    </span>
